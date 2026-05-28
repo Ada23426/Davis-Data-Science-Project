@@ -1,0 +1,291 @@
+---
+title: "DDSC"
+output: pdf_document
+date: "2025-2-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+```{r}
+# Read the data into R
+data <- read.csv("C:/Users/rachi/OneDrive/Desktop/insurance.csv")
+names(data)[7] <- "premium"
+
+# Convert categorical columns smoke and region into numerical categories
+for (entry in 1:length(data$smoker)){
+  if (data$smoker[entry] == "yes"){
+    data[entry,"smoker"] <- "1"
+  }else{
+    data[entry,"smoker"] <- "0"
+  }
+}
+data["smoker"] <- as.integer(data$smoker)
+
+
+for (entry in 1:length(data$region)){
+  if (data$region[entry] == "southwest"){
+    data[entry,"region"] <- "1"
+  }else if (data$region[entry] == "southeast"){
+    data[entry,"region"] <- "2"
+  }else if (data$region[entry] == "northwest"){
+    data[entry,"region"] <- "3"
+  }else{
+    data[entry,"region"] <- "4"
+  }
+}
+data["region"] <- as.integer(data$region)
+
+# Remove sex from the dataset to study humans as a whole
+insurance_data <- subset(data,select= -sex)
+
+# Partions data into a test set and a modeling set in a 20/80 split
+set.seed(123)
+test_indices <- sample.int(length(insurance_data$age), round(length(insurance_data$age)*0.2), replace = FALSE)
+insurance_model_data <- insurance_data[-c(test_indices),]
+insurance_test_data <- insurance_data[c(test_indices),]
+
+```
+
+
+```{r}
+# Plot premium against client data to test linearity
+insurance_model_data %>%
+  pivot_longer(cols = -premium) %>%
+  ggplot(aes(x=value, y=premium))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  labs(title="Insurance Premium v.s. Client Data")+
+  facet_wrap(~name, scales="free")+
+  theme_classic()
+```
+```{r}
+# Check correlation between dependent and independent variables
+cor(insurance_model_data$premium, subset(insurance_model_data,select=-premium))
+```
+
+
+```{r}
+# Create a correlation matrix to test colinearity
+library(corrplot)
+
+# Ensure all predictors are numeric
+predictors <- insurance_model_data %>%
+  select(-premium) %>%
+  mutate(
+    smoker = as.numeric(smoker), 
+    region = as.numeric(region), 
+  )
+
+# correlation matrix
+correlation_matrix <- cor(predictors, use = "pairwise.complete.obs") # Handles NAs
+print(correlation_matrix)
+
+corrplot(
+  correlation_matrix,
+  method = "color",        
+  tl.col = "black",         
+  tl.cex = 0.8,             
+  addCoef.col = "black",    
+  number.cex = 0.7        
+)
+
+```
+
+```{r}
+# Build a full model and perform a F-test on it
+insurance_full_model <-lm(premium~., data = insurance_model_data)
+summary(insurance_full_model)
+```
+
+```{r}
+#Reduced Model 1: Exclude region
+reduced_model_no_region <-lm(premium~ age + bmi + smoker + children, data = insurance_model_data)
+summary(reduced_model_no_region)
+```
+
+```{r}
+#Reduced Model 2: Exclude both region and children
+reduced_model_no_region_children <-lm(premium~ age + bmi + smoker, data = insurance_model_data)
+summary(reduced_model_no_region_children)
+```
+
+```{r}
+#F-test: Full model vs. Reduced Model 1 (No Region)
+anova(reduced_model_no_region, insurance_full_model)
+```
+
+```{r}
+#F-test: Full model vs. Reduced Model 2 (No Region and Children)
+anova(reduced_model_no_region_children, insurance_full_model)
+```
+
+```{r}
+#Compare adjusted R-squared values
+cat("\nAdjusted R-Squared Comaprison:\n")
+cat("Full Model Adjusted R^2:", summary(insurance_full_model)$adj.r.squared, "\n")
+cat("Reduced Model (no region) Adjusted R^2:", summary(reduced_model_no_region)$adj.r.squared,
+"\n")
+cat("Reduced Model (No Region and Children) Adjusted R^2:",
+summary(reduced_model_no_region_children)$adj.r.squared, "\n")
+```
+
+
+
+```{r}
+# Include gender in the dataset
+insurance_data_with_gender <- read.csv("C:/Users/rachi/OneDrive/Desktop/insurance.csv")
+names(insurance_data_with_gender)[7] <- "premium"
+
+# Add the sex column from the original data, matching the rows in insurance_model_data
+insurance_model_data$sex <- insurance_data_with_gender$sex[-test_indices]
+
+# Full model without gender
+full_model_no_gender <- lm(premium ~ age + bmi + smoker + children, data = insurance_model_data)
+
+# Model with gender
+model_with_gender <- lm(premium ~ age + bmi + smoker + children + sex, data = insurance_model_data)
+
+# Perform F-test
+anova(full_model_no_gender, model_with_gender)
+
+
+```
+
+
+```{r}
+# Check the significance of the gender coefficient
+summary(model_with_gender)
+```
+```{r}
+# Enhanced cross-validation setup
+set.seed(123)
+train_control <- trainControl(
+  method = "repeatedcv",        # Use repeated cross-validation
+  number = 10,                  # 10 folds
+  repeats = 5,                  # Repeat 5 times
+  savePredictions = "all",      # Save all predictions for analysis
+  verboseIter = TRUE
+)
+
+# Train model with cross-validation
+cv_model <- train(
+  premium ~ age + bmi + smoker + children,
+  data = insurance_data,
+  method = "lm",
+  trControl = train_control,
+  preProcess = c("center", "scale")  # Standardize predictors
+)
+
+# Print detailed cross-validation results
+print("Cross-validation Results:")
+print(cv_model)
+
+# Extract CV predictions and actual values
+cv_predictions <- cv_model$pred
+cv_results <- data.frame(
+  Predicted = cv_predictions$pred,
+  Actual = cv_predictions$obs,
+  Fold = cv_predictions$Resample
+)
+
+# Calculate performance metrics across all CV folds
+cv_metrics <- cv_results %>%
+  group_by(Fold) %>%
+  summarize(
+    RMSE = sqrt(mean((Predicted - Actual)^2)),
+    R2 = cor(Predicted, Actual)^2,
+    MAE = mean(abs(Predicted - Actual))
+  )
+
+# Print summary statistics of CV performance
+cat("\nCross-validation Performance Statistics:\n")
+cat("Mean RMSE:", mean(cv_metrics$RMSE), "\n")
+cat("SD RMSE:", sd(cv_metrics$RMSE), "\n")
+cat("Mean R2:", mean(cv_metrics$R2), "\n")
+cat("SD R2:", sd(cv_metrics$R2), "\n")
+cat("Mean MAE:", mean(cv_metrics$MAE), "\n")
+cat("SD MAE:", sd(cv_metrics$MAE), "\n")
+
+# Visualize CV performance distribution
+ggplot(cv_metrics, aes(x = RMSE)) +
+  geom_histogram(bins = 20, fill = "steelblue", alpha = 0.7) +
+  labs(title = "Distribution of RMSE across CV Folds",
+       x = "RMSE",
+       y = "Count") +
+  theme_minimal()
+
+# Create prediction intervals
+predictions <- predict(cv_model, insurance_data)
+residuals <- insurance_data$premium - predictions
+sigma <- sd(residuals)
+prediction_interval <- 1.96 * sigma  # 95% prediction interval
+
+# Plot actual vs predicted with prediction intervals
+ggplot(data.frame(
+  Actual = insurance_data$premium,
+  Predicted = predictions
+), aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  geom_ribbon(aes(ymin = Predicted - prediction_interval,
+                  ymax = Predicted + prediction_interval),
+              alpha = 0.2) +
+  labs(title = "Actual vs Predicted Insurance Premiums\nwith 95% Prediction Interval",
+       x = "Actual Premium ($)",
+       y = "Predicted Premium ($)") +
+  theme_minimal()
+
+# Residual analysis
+ggplot(data.frame(residuals = residuals), aes(x = residuals)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  labs(title = "Distribution of Residuals",
+       x = "Residuals ($)",
+       y = "Count") +
+  theme_minimal()
+
+# Variable Importance with confidence intervals
+var_imp <- varImp(cv_model)
+var_imp_df <- data.frame(
+  Variable = rownames(var_imp$importance),
+  Importance = var_imp$importance$Overall
+)
+
+# Plot variable importance with error bars
+ggplot(var_imp_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue", alpha = 0.7) +
+  geom_errorbar(aes(ymin = Importance * 0.95, ymax = Importance * 1.05),
+                width = 0.2) +
+  coord_flip() +
+  labs(title = "Variable Importance in Premium Prediction",
+       x = "Variables",
+       y = "Importance") +
+  theme_minimal()
+
+# Test set evaluation
+final_predictions <- predict(cv_model, insurance_test_data)
+test_metrics <- data.frame(
+  RMSE = sqrt(mean((final_predictions - insurance_test_data$premium)^2)),
+  R2 = cor(final_predictions, insurance_test_data$premium)^2,
+  MAE = mean(abs(final_predictions - insurance_test_data$premium))
+)
+
+cat("\nFinal Test Set Performance:\n")
+print(test_metrics)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
