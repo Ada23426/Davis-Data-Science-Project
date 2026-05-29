@@ -2,6 +2,6 @@
 
 By 
 
---
+---
 
 We developed predictive regression models to classify insurance premiums using the insurance dataset that was obtained from Kaggle. After splitting our data into training and test set, we conducted exploratory data analysis (EDA) on the training set to examine distribution of features, identify multicollinearity and analyze relationships between variables. We evaluated feature importance using F statistics and adjusted R^2 values from both the full and reduced models to determine the final model. We then performed repeated k-fold cross-validation and evaluated prediction accuracy on the test set using RMSE, MAE and R-squared. 
