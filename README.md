@@ -1,4 +1,4 @@
-# Davis Data Science Project
+# Predicting Insurnace Premiums - Davis Data Science Club Project
 
 ## Overview
 
